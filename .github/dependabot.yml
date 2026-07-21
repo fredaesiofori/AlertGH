@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    ignore:
+      # Ignore noisy patch bumps — only care about minor and major
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
