@@ -13,8 +13,17 @@ Report hazards anonymously, track live incidents on an interactive map, and coor
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![CI](https://github.com/fredaesiofori/AlertGH/actions/workflows/ci.yml/badge.svg)](https://github.com/fredaesiofori/AlertGH/actions/workflows/ci.yml)
 [![Deploy](https://github.com/fredaesiofori/AlertGH/actions/workflows/deploy.yml/badge.svg)](https://github.com/fredaesiofori/AlertGH/actions/workflows/deploy.yml)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-alertgh--11142.web.app-brightgreen?logo=firebase)](https://alertgh-11142.web.app)
 
 </div>
+
+---
+
+## 🌐 Live Demo
+
+**[https://alertgh-11142.web.app](https://alertgh-11142.web.app)**
+
+Deployed on Firebase Hosting — updates automatically on every merge to `main`.
 
 ---
 
