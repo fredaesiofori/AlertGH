@@ -1,0 +1,6 @@
+{
+  "name": "AlertGH",
+  "description": "Real-time Emergency & Community Response Platform for Ghana to report, verify, and respond to incidents.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
