@@ -1,0 +1,139 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    transition: background-color 300ms ease, color 300ms ease;
+  }
+  
+  html.dark {
+    background-color: #09090b !important;
+    color: #f4f4f5 !important;
+  }
+  
+  html:not(.dark) {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+  }
+
+  body {
+    transition: background-color 300ms ease, color 300ms ease;
+  }
+
+  html.dark body {
+    background-color: #09090b !important;
+    color: #f4f4f5 !important;
+  }
+
+  html:not(.dark) body {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+  }
+
+  input, select, textarea {
+    font-size: 14px !important;
+    line-height: 1.4;
+    border-radius: 8px !important;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+
+  html.dark input, html.dark select, html.dark textarea {
+    color: #f4f4f5 !important;
+    background-color: #18181b !important;
+    border-color: #27272a !important;
+  }
+
+  html:not(.dark) input, html:not(.dark) select, html:not(.dark) textarea {
+    color: #0f172a !important;
+    background-color: #ffffff !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: #10b981 !important;
+    outline: none !important;
+  }
+
+  ::selection {
+    background-color: rgba(16, 185, 129, 0.2);
+    color: inherit;
+  }
+}
+
+/* Glass panel style used in the original beautiful Ghanaian sunset design */
+.glass-panel {
+  background-color: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.dark .glass-panel {
+  background-color: rgba(24, 24, 27, 0.65);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(39, 39, 42, 0.8);
+}
+
+/* Scrollbar styling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.3);
+  border-radius: 9999px;
+}
+
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(75, 85, 99, 0.4);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.5);
+}
+
+@keyframes logo-heartbeat {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.2);
+  }
+  14% {
+    transform: scale(1.08);
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.5);
+  }
+  28% {
+    transform: scale(0.98);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+  }
+  42% {
+    transform: scale(1.08);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.2);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.2);
+  }
+}
+
+.logo-emergency-heartbeat {
+  animation: logo-heartbeat 1.5s infinite ease-in-out;
+}
+
