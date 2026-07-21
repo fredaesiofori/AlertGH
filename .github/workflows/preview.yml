@@ -31,6 +31,7 @@ jobs:
           VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
 
       - name: Deploy PR preview to Firebase Hosting
+        if: ${{ github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]' }}
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
