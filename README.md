@@ -11,8 +11,19 @@ Report hazards anonymously, track live incidents on an interactive map, and coor
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![CI](https://github.com/fredaesiofori/AlertGH/actions/workflows/ci.yml/badge.svg)](https://github.com/fredaesiofori/AlertGH/actions/workflows/ci.yml)
+[![Deploy](https://github.com/fredaesiofori/AlertGH/actions/workflows/deploy.yml/badge.svg)](https://github.com/fredaesiofori/AlertGH/actions/workflows/deploy.yml)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-alertgh--11142.web.app-brightgreen?logo=firebase)](https://alertgh-11142.web.app)
 
 </div>
+
+---
+
+## 🌐 Live Demo
+
+**[https://alertgh-11142.web.app](https://alertgh-11142.web.app)**
+
+Deployed on Firebase Hosting — updates automatically on every merge to `main`.
 
 ---
 
@@ -96,6 +107,15 @@ alertgh/
 │   ├── types.ts               # TypeScript interfaces (Incident, EmergencyContact, etc.)
 │   ├── utils.ts               # formatTimeAgo helper
 │   └── main.tsx               # React entry point
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml             # TypeScript check + build on every push and PR
+│   │   ├── deploy.yml         # Auto-deploy to Firebase Hosting on merge to main
+│   │   ├── preview.yml        # PR preview deployments with unique URLs
+│   │   └── firestore-rules.yml # Auto-deploy Firestore rules when changed
+│   └── dependabot.yml         # Weekly npm dependency security scanning
+├── firebase.json              # Firebase Hosting config (SPA rewrites, cache headers)
+├── .firebaserc                # Firebase project alias (alertgh-11142)
 ├── firestore.rules            # Firestore security rules
 ├── .env.example               # Environment variable template
 ├── index.html                 # PWA meta tags, OG tags, SW registration
@@ -196,6 +216,47 @@ The included `firestore.rules` enforces:
 - Citizens can only update vote fields (`upvotes`, `downvotes`, `verificationScore`)
 - Authenticated responders can update/delete any incident
 - All other paths are denied by default
+
+---
+
+## CI / CD & DevOps
+
+AlertGH uses GitHub Actions for a fully automated build, test, and deployment pipeline. All workflows live in `.github/workflows/`.
+
+### Workflows
+
+| Workflow | File | Trigger | What it does |
+|---|---|---|---|
+| **CI** | `ci.yml` | Every push + every PR to `main` | Runs `tsc --noEmit` (TypeScript check) then `vite build` to catch broken code before it merges |
+| **Deploy** | `deploy.yml` | Merge to `main` | Builds the app and deploys it live to Firebase Hosting at `alertgh-11142.web.app` |
+| **PR Preview** | `preview.yml` | Every pull request to `main` | Deploys a temporary preview URL per PR — Firebase posts the link as a PR comment automatically |
+| **Firestore Rules** | `firestore-rules.yml` | Push to `main` that touches `firestore.rules` | Deploys updated security rules to Firestore — only runs when the rules file actually changes |
+| **Dependabot** | `dependabot.yml` | Every Monday | Opens PRs for outdated or vulnerable npm packages (minor + major only, patch bumps ignored) |
+
+### Firebase Hosting config
+
+`firebase.json` configures hosting to:
+- Serve from the `dist/` folder produced by `vite build`
+- Rewrite all routes to `index.html` for SPA deep linking
+- Set `no-cache` on `sw.js` so the service worker always updates immediately
+- Set long-term immutable cache headers on all JS/CSS assets
+- Add security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`) on all responses
+
+### Required GitHub Secrets
+
+For the deploy, preview, and rules workflows to function, add these in **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|---|---|
+| `VITE_FIREBASE_API_KEY` | Firebase config for the build |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase config for the build |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase config for the build |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase config for the build |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase config for the build |
+| `VITE_FIREBASE_APP_ID` | Firebase config for the build |
+| `VITE_GEMINI_API_KEY` | Gemini AI config for the build |
+| `FIREBASE_SERVICE_ACCOUNT` | JSON key for Firebase Hosting deploy + PR previews |
+| `FIREBASE_TOKEN` | CI token for Firestore rules deploy (`firebase login:ci`) |
 
 ---
 
