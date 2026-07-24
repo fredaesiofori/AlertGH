@@ -76,13 +76,17 @@ const checkRateLimit = (): void => {
 const sanitize = (str: string): string =>
   str.replace(/<[^>]*>/g, '').trim().slice(0, 2000);
 
+// Log sanitization: strip newlines to prevent log injection
+const sanitizeLog = (val: unknown): string =>
+  String(val).replace(/\r?\n/g, ' ');
+
 // Memory & LocalStorage Fallback State
 const getLocalIncidents = (): Incident[] => {
   try {
     const saved = localStorage.getItem('alertgh_incidents');
     if (saved) return JSON.parse(saved);
   } catch (e) {
-    console.error('Error parsing local incidents:', e);
+    console.error('Error parsing local incidents:', sanitizeLog(e));
   }
   localStorage.setItem('alertgh_incidents', JSON.stringify(INITIAL_INCIDENTS));
   return INITIAL_INCIDENTS;
@@ -97,7 +101,7 @@ const getLocalContacts = (): EmergencyContact[] => {
     const saved = localStorage.getItem('alertgh_emergency_contacts');
     if (saved) return JSON.parse(saved);
   } catch (e) {
-    console.error('Error parsing local emergency contacts:', e);
+    console.error('Error parsing local emergency contacts:', sanitizeLog(e));
   }
   localStorage.setItem('alertgh_emergency_contacts', JSON.stringify(EMERGENCY_CONTACTS));
   return EMERGENCY_CONTACTS;
@@ -126,7 +130,7 @@ const seedFirestoreIfNeeded = async (collectionName: string, initialData: any[])
       console.log(`Finished seeding ${collectionName}.`);
     }
   } catch (error) {
-    console.error(`Error seeding ${collectionName}:`, error);
+    console.error(`Error seeding ${sanitizeLog(collectionName)}:`, sanitizeLog(error));
   }
 };
 
@@ -162,7 +166,7 @@ export const fetchIncidentsFromFirestore = async (): Promise<Incident[]> => {
     saveLocalIncidents(incidents);
     return incidents;
   } catch (error) {
-    console.error('Failed to fetch incidents from Firestore:', error);
+    console.error('Failed to fetch incidents from Firestore:', sanitizeLog(error));
     // Graceful fallback to local cache
     return getLocalIncidents();
   }
@@ -195,7 +199,7 @@ export const fetchContactsFromFirestore = async (): Promise<EmergencyContact[]> 
     saveLocalContacts(contacts);
     return contacts;
   } catch (error) {
-    console.error('Failed to fetch emergency contacts from Firestore:', error);
+    console.error('Failed to fetch emergency contacts from Firestore:', sanitizeLog(error));
     return getLocalContacts();
   }
 };
@@ -208,7 +212,7 @@ export const uploadImageToStorage = async (base64DataUrl: string, incidentId: st
     await uploadString(storageRef, base64DataUrl, 'data_url');
     return await getDownloadURL(storageRef);
   } catch (error) {
-    console.error('Failed to upload image to Storage:', error);
+    console.error('Failed to upload image to Storage:', sanitizeLog(error));
     return base64DataUrl; // fallback to base64
   }
 };
@@ -225,7 +229,7 @@ export const subscribeToIncidents = (callback: (incidents: Incident[]) => void):
     saveLocalIncidents(incidents);
     callback(incidents);
   }, (error) => {
-    console.error('Firestore snapshot error:', error);
+    console.error('Firestore snapshot error:', sanitizeLog(error));
     callback(getLocalIncidents());
   });
 };
@@ -271,7 +275,7 @@ export const addIncidentToFirestore = async (newIncident: Omit<Incident, 'id' | 
     const docRef = await addDoc(colRef, finalIncident);
     return { ...finalIncident, id: docRef.id };
   } catch (error) {
-    console.error('Error adding incident to Firestore:', error);
+    console.error('Error adding incident to Firestore:', sanitizeLog(error));
     const local = getLocalIncidents();
     const createdIncident: Incident = { ...baseIncident, id: `inc-${Date.now()}` };
     saveLocalIncidents([createdIncident, ...local]);
@@ -291,7 +295,7 @@ export const updateIncidentInFirestore = async (id: string, updates: Partial<Inc
     const docRef = doc(db, 'incidents', id);
     await updateDoc(docRef, updates);
   } catch (error) {
-    console.error(`Error updating incident ${id} in Firestore:`, error);
+    console.error(`Error updating incident ${sanitizeLog(id)} in Firestore:`, sanitizeLog(error));
     // Fallback save locally
     const local = getLocalIncidents();
     const updated = local.map(inc => inc.id === id ? { ...inc, ...updates } : inc);
@@ -312,7 +316,7 @@ export const deleteIncidentFromFirestore = async (id: string): Promise<void> => 
     const docRef = doc(db, 'incidents', id);
     await deleteDoc(docRef);
   } catch (error) {
-    console.error(`Error deleting incident ${id} from Firestore:`, error);
+    console.error(`Error deleting incident ${sanitizeLog(id)} from Firestore:`, sanitizeLog(error));
     const local = getLocalIncidents();
     const updated = local.filter(inc => inc.id !== id);
     saveLocalIncidents(updated);
@@ -337,7 +341,7 @@ export const onAuthChanged = (callback: (user: any) => void) => {
         mockAuthUser = JSON.parse(saved);
       }
     } catch (e) {
-      console.error('Error loading mock user:', e);
+      console.error('Error loading mock user:', sanitizeLog(e));
     }
     
     callback(mockAuthUser);

@@ -62,7 +62,7 @@ export default function ReportForm({ onAddIncident, coordinates, onClose, select
   useEffect(() => {
     if (isCameraActive && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(e => console.warn("Failed to play camera preview:", e));
+      videoRef.current.play().catch(e => console.warn("Failed to play camera preview:", String(e).replace(/[\r\n]/g, ' ')));
     }
   }, [isCameraActive]);
 
@@ -76,7 +76,7 @@ export default function ReportForm({ onAddIncident, coordinates, onClose, select
       streamRef.current = stream;
       setIsCameraActive(true);
     } catch (err: any) {
-      console.error("Camera access error:", err);
+      console.error("Camera access error:", String(err).replace(/[\r\n]/g, ' '));
       setCameraError("Camera access denied or unavailable. Please check permissions.");
       setIsCameraActive(false);
     }

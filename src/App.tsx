@@ -667,7 +667,7 @@ export default function App() {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     }).catch((err) => {
-      console.error('Failed to copy text: ', err);
+      console.error('Failed to copy text: ', String(err).replace(/[\r\n]/g, ' '));
     });
   };
 
