@@ -3,6 +3,7 @@ import { GHANA_REGIONS } from '../data/ghanaData';
 import { Incident, IncidentCategory, SeverityLevel } from '../types';
 import { Shield, MapPin, Camera, X, Check, ArrowLeft, ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
+import { validateReportDraft } from '../utils';
 
 interface ReportFormProps {
   onAddIncident: (incident: Omit<Incident, 'id' | 'reportedAt' | 'verificationScore' | 'upvotes' | 'downvotes' | 'status'>) => void;
@@ -33,6 +34,7 @@ export default function ReportForm({ onAddIncident, coordinates, onClose, select
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   // Live Camera state & refs
   const [imageSourceType, setImageSourceType] = useState<'preset' | 'camera'>('preset');
@@ -119,8 +121,22 @@ export default function ReportForm({ onAddIncident, coordinates, onClose, select
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !city || !description) return;
 
+    const validation = validateReportDraft({
+      title,
+      city,
+      description,
+      reporterName,
+      isAnonymous,
+    });
+
+    if (!validation.isValid) {
+      setValidationErrors(validation.errors);
+      setStep(3);
+      return;
+    }
+
+    setValidationErrors({});
     stopCamera();
     setIsSubmitting(true);
 
@@ -150,6 +166,67 @@ export default function ReportForm({ onAddIncident, coordinates, onClose, select
 
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<{ severity: SeverityLevel; reason: string } | null>(null);
+
+  const handleStepChange = (nextStep: number) => {
+    if (nextStep < step) {
+      setStep(nextStep);
+      return;
+    }
+
+    if (nextStep === 2) {
+      const validation = validateReportDraft({
+        title,
+        city,
+        description,
+        reporterName,
+        isAnonymous,
+      });
+      if (!validation.isValid) {
+        setValidationErrors(validation.errors);
+      } else {
+        setValidationErrors({});
+      }
+      setStep(nextStep);
+      return;
+    }
+
+    if (nextStep === 3) {
+      const validation = validateReportDraft({
+        title,
+        city,
+        description,
+        reporterName,
+        isAnonymous,
+      });
+      if (!validation.isValid) {
+        setValidationErrors(validation.errors);
+      } else {
+        setValidationErrors({});
+      }
+      setStep(nextStep);
+      return;
+    }
+
+    if (nextStep === 4) {
+      const validation = validateReportDraft({
+        title,
+        city,
+        description,
+        reporterName,
+        isAnonymous,
+      });
+      if (!validation.isValid) {
+        setValidationErrors(validation.errors);
+        setStep(3);
+        return;
+      }
+      setValidationErrors({});
+      setStep(nextStep);
+      return;
+    }
+
+    setStep(nextStep);
+  };
 
   const suggestSeverityWithAI = async () => {
     if (!title.trim() && !description.trim()) return;
@@ -248,7 +325,7 @@ Location: ${city}, ${region}`;
                 key={s.num}
                 type="button"
                 disabled={s.num > step}
-                onClick={() => setStep(s.num)}
+                onClick={() => handleStepChange(s.num)}
                 className={`flex-1 py-1.5 rounded-md text-[11px] sm:text-[13px] font-semibold transition-all flex items-center justify-center gap-0.5 sm:gap-1 cursor-pointer ${
                   step === s.num
                     ? 'bg-white text-[#1C1C1E] shadow-sm'
@@ -431,6 +508,19 @@ Location: ${city}, ${region}`;
                     className="w-full bg-slate-100 dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 text-[15px] px-3.5 py-3 rounded-lg border border-slate-200 dark:border-zinc-800 focus:bg-white dark:focus:bg-zinc-805 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition font-medium placeholder-slate-400 dark:placeholder-zinc-500 resize-none"
                   />
                 </div>
+
+                {validationErrors.title && (
+                  <p className="text-[11px] font-bold text-red-500">⚠️ {validationErrors.title}</p>
+                )}
+                {validationErrors.city && (
+                  <p className="text-[11px] font-bold text-red-500">⚠️ {validationErrors.city}</p>
+                )}
+                {validationErrors.description && (
+                  <p className="text-[11px] font-bold text-red-500">⚠️ {validationErrors.description}</p>
+                )}
+                {validationErrors.reporterName && (
+                  <p className="text-[11px] font-bold text-red-500">⚠️ {validationErrors.reporterName}</p>
+                )}
 
                 {/* Evidence Photo Choice */}
                 <div className="space-y-2.5">
@@ -664,7 +754,7 @@ Location: ${city}, ${region}`;
             {step > 1 ? (
               <button
                 type="button"
-                onClick={() => setStep(step - 1)}
+                onClick={() => handleStepChange(step - 1)}
                 disabled={isSubmitting}
                 className="px-4 py-2 text-[14px] font-bold text-[#007AFF] bg-[#007AFF]/10 rounded-lg flex items-center gap-1 cursor-pointer"
                 id="wizard-back-button"
@@ -686,7 +776,7 @@ Location: ${city}, ${region}`;
             {step < 4 ? (
               <button
                 type="button"
-                onClick={() => setStep(step + 1)}
+                onClick={() => handleStepChange(step + 1)}
                 disabled={
                   (step === 2 && !city.trim()) ||
                   (step === 3 && (!title.trim() || !description.trim()))
