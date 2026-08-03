@@ -9,13 +9,13 @@ import {
   isFirebaseConfigured,
 } from './firebase';
 import { useAuth } from './hooks/useAuth';
-import { useNotifications } from './hooks/useNotifications';
+import { useNotifications, useFCM } from './hooks/useNotifications';
 import GhanaMap from './components/GhanaMap';
-import { formatTimeAgo } from './utils';
+import { buildResponderIncidentUpdate, formatTimeAgo, getOfficialSeverity, getResponderSummary } from './utils';
 import DashboardStats from './components/DashboardStats';
 import ReportForm from './components/ReportForm';
 import EmergencyDirectory from './components/EmergencyDirectory';
-import { Shield, Plus, Filter, Info, MapPin, Eye, Clock, ThumbsUp, ThumbsDown, CheckCircle, Flame, AlertTriangle, Radio, Server, ShieldAlert, HeartPulse, RefreshCw, Bell, BellOff, Trash2, Settings, Volume2, VolumeX, Share2, Map, BarChart3, Phone, Sun, Moon, X, HelpCircle, Loader2, PlusCircle, Edit3, User } from 'lucide-react';
+import { Shield, Plus, Filter, Info, MapPin, Eye, Clock, ThumbsUp, ThumbsDown, CheckCircle, Flame, AlertTriangle, Radio, Server, ShieldAlert, HeartPulse, RefreshCw, Bell, BellOff, Trash2, Settings, Volume2, VolumeX, Share2, Map, BarChart3, Phone, Sun, Moon, X, Menu, HelpCircle, Loader2, PlusCircle, Edit3, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ghanaSunsetFlags from './assets/images/ghana_sunset_flags_1784416661446.jpg';
 import ghanaSplatterLight from './assets/images/ghana_splatter_light_1784499115451.jpg';
@@ -423,6 +423,7 @@ export default function App() {
   }, [theme]);
 
   const [activeTab, setActiveTab] = useState<'map' | 'analytics' | 'hotlines'>('map');
+  const [showMobileNav, setShowMobileNav] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [showIncidentModal, setShowIncidentModal] = useState(false);
@@ -576,6 +577,10 @@ export default function App() {
   const [responderStatus, setResponderStatus] = useState<IncidentStatus>('active');
   const [showOfficialUpdateModal, setShowOfficialUpdateModal] = useState(false);
   const [selectedSeverity, setSelectedSeverity] = useState<SeverityLevel>('medium');
+  const [responderReviewStatus, setResponderReviewStatus] = useState<'pending' | 'verified' | 'dismissed'>('pending');
+  const [responderReviewReason, setResponderReviewReason] = useState('');
+  const [responderInternalNotes, setResponderInternalNotes] = useState('');
+  const [responderAssignedAgency, setResponderAssignedAgency] = useState('');
 
   // Firebase Auth and DB Sync State
   const { firebaseUser, loginWithEmail, registerWithEmail, logoutUser } = useAuth();
@@ -586,6 +591,7 @@ export default function App() {
     isMuted, setIsMuted,
     triggerPushNotification,
   } = useNotifications();
+  const fcm = useFCM(notifPref);
 
   const [dbLoading, setDbLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
@@ -667,7 +673,7 @@ export default function App() {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     }).catch((err) => {
-      console.error('Failed to copy text: ', err);
+      console.error('Failed to copy text: ', String(err).replace(/[\r\n]/g, ' '));
     });
   };
 
@@ -907,17 +913,99 @@ export default function App() {
     }
   };
 
+  const handleResponderReviewAction = async (id: string, reviewStatus: 'verified' | 'dismissed', reviewReason: string) => {
+    if (!checkResponderAuth()) return;
+    const oldIncident = incidents.find(inc => inc.id === id);
+    if (!oldIncident) return;
+
+    const nextReason = reviewReason || (reviewStatus === 'verified' ? 'Verified by official responder.' : 'Dismissed after review by official responder.');
+    const updatedIncident = {
+      ...oldIncident,
+      reviewStatus,
+      reviewReason: nextReason,
+    };
+
+    const updated = incidents.map(inc => inc.id === id ? updatedIncident : inc);
+    setIncidents(updated);
+    setSelectedIncident(updatedIncident);
+
+    try {
+      await updateIncidentInFirestore(id, {
+        reviewStatus,
+        reviewReason: nextReason,
+      });
+      triggerPushNotification(
+        'info_update',
+        updatedIncident,
+        reviewStatus === 'verified' ? '✅ Review Verified' : '🗑️ Review Dismissed',
+        reviewStatus === 'verified'
+          ? `The report was verified by official responders and moved to the reviewed queue.`
+          : `The report was dismissed as unsuitable for the public feed.`
+      );
+    } catch (err: any) {
+      console.error('Failed to save review action:', err);
+      setIncidents(incidents);
+      setSelectedIncident(oldIncident);
+      alert('Failed to save review action: ' + (err.message || err));
+    }
+  };
+
+  const handleBulkResolveVisible = async () => {
+    if (!checkResponderAuth()) return;
+    const targetIncidents = visibleIncidents.filter(inc => inc.status !== 'resolved');
+    if (targetIncidents.length === 0) return;
+
+    const updates = targetIncidents.map(inc => ({
+      ...inc,
+      status: 'resolved' as IncidentStatus,
+      officialNotes: inc.officialNotes || 'Situation resolved and marked safe by official responders.',
+    }));
+
+    const updated = incidents.map(inc => {
+      const matching = updates.find(item => item.id === inc.id);
+      return matching ? matching : inc;
+    });
+
+    setIncidents(updated);
+    if (selectedIncident && updates.some(item => item.id === selectedIncident.id)) {
+      setSelectedIncident(updated.find(inc => inc.id === selectedIncident.id) || null);
+    }
+
+    try {
+      await Promise.all(updates.map(inc => updateIncidentInFirestore(inc.id, {
+        status: 'resolved',
+        officialNotes: inc.officialNotes,
+      })));
+      triggerPushNotification(
+        'status_update',
+        null as any,
+        '✅ Bulk Resolve Applied',
+        `${updates.length} visible incidents were marked resolved by the responder console.`
+      );
+    } catch (err: any) {
+      console.error('Failed to bulk resolve incidents:', err);
+      setIncidents(incidents);
+      setSelectedIncident(selectedIncident);
+      alert('Failed to apply bulk resolve action: ' + (err.message || err));
+    }
+  };
+
   // Responder actions (Update status, severity & Official notes)
   const handleResponderUpdateSubmit = async (e: React.FormEvent, id: string) => {
     e.preventDefault();
     const oldIncident = incidents.find(inc => inc.id === id);
     if (!oldIncident) return;
 
+    const officialSeverityValue = selectedSeverity;
     const updatedIncident = {
       ...oldIncident,
       status: responderStatus,
-      severity: selectedSeverity,
-      officialNotes: responderNotes || oldIncident.officialNotes
+      officialSeverity: officialSeverityValue,
+      officialNotes: responderNotes || oldIncident.officialNotes,
+      reviewStatus: responderReviewStatus,
+      reviewReason: responderReviewReason || oldIncident.reviewReason,
+      internalNotes: responderInternalNotes || oldIncident.internalNotes,
+      assignedAgency: responderAssignedAgency || oldIncident.assignedAgency,
     };
 
     // Update state optimistically
@@ -927,22 +1015,29 @@ export default function App() {
 
     try {
       await updateIncidentInFirestore(id, {
-        status: responderStatus,
-        severity: selectedSeverity,
-        officialNotes: responderNotes || oldIncident.officialNotes
+        ...buildResponderIncidentUpdate({
+          status: responderStatus,
+          officialSeverity: officialSeverityValue,
+          reviewStatus: responderReviewStatus,
+          reviewReason: responderReviewReason,
+          internalNotes: responderInternalNotes,
+          assignedAgency: responderAssignedAgency,
+        }),
+        officialNotes: responderNotes || oldIncident.officialNotes,
       });
 
       // Determine what changed
       const statusChanged = oldIncident.status !== updatedIncident.status;
-      const severityChanged = oldIncident.severity !== updatedIncident.severity;
+      const severityChanged = (oldIncident.officialSeverity || oldIncident.severity) !== updatedIncident.officialSeverity;
       const notesChanged = responderNotes && oldIncident.officialNotes !== updatedIncident.officialNotes;
+      const reviewChanged = responderReviewStatus && oldIncident.reviewStatus !== updatedIncident.reviewStatus;
       
       if (severityChanged) {
         triggerPushNotification(
           'status_update',
           updatedIncident,
-          `⚠️ SEVERITY UPDATED: ${updatedIncident.title}`,
-          `Incident severity was updated to [${updatedIncident.severity.toUpperCase()}] in ${updatedIncident.city}, ${updatedIncident.region}.`
+          `⚠️ OFFICIAL SEVERITY UPDATED: ${updatedIncident.title}`,
+          `Official severity was updated to [${updatedIncident.officialSeverity?.toUpperCase()}] in ${updatedIncident.city}, ${updatedIncident.region}.`
         );
       } else if (statusChanged) {
         triggerPushNotification(
@@ -950,6 +1045,13 @@ export default function App() {
           updatedIncident,
           `🔄 Status Resolved/Updated: ${updatedIncident.title}`,
           `Emergency status updated to [${updatedIncident.status.toUpperCase()}] in ${updatedIncident.city}, ${updatedIncident.region}.`
+        );
+      } else if (reviewChanged) {
+        triggerPushNotification(
+          'info_update',
+          updatedIncident,
+          `🛡️ Review Status Updated: ${updatedIncident.title}`,
+          `The report review status was updated to [${updatedIncident.reviewStatus?.toUpperCase()}].`
         );
       } else if (notesChanged) {
         triggerPushNotification(
@@ -960,6 +1062,9 @@ export default function App() {
         );
       }
       setResponderNotes('');
+      setResponderReviewReason('');
+      setResponderInternalNotes('');
+      setResponderAssignedAgency('');
       setShowOfficialUpdateModal(false);
       if (window.history.state?.type === 'officialUpdate') {
         window.history.back();
@@ -1133,6 +1238,27 @@ export default function App() {
     setShowReportModal(true);
   };
 
+  const populateResponderForm = (incident: Incident | null) => {
+    if (!incident) {
+      setResponderStatus('active');
+      setSelectedSeverity('medium');
+      setResponderNotes('');
+      setResponderReviewStatus('pending');
+      setResponderReviewReason('');
+      setResponderInternalNotes('');
+      setResponderAssignedAgency('');
+      return;
+    }
+
+    setResponderStatus(incident.status);
+    setSelectedSeverity(incident.officialSeverity || incident.severity || 'medium');
+    setResponderNotes(incident.officialNotes || '');
+    setResponderReviewStatus(incident.reviewStatus || 'pending');
+    setResponderReviewReason(incident.reviewReason || '');
+    setResponderInternalNotes(incident.internalNotes || '');
+    setResponderAssignedAgency(incident.assignedAgency || '');
+  };
+
   const getSeverityStyle = (severity: SeverityLevel) => {
     switch (severity) {
       case 'critical': return 'bg-red-50 text-red-700 border border-red-200/60 shadow-sm';
@@ -1186,6 +1312,22 @@ export default function App() {
   const visibleIncidents = isResponderMode 
     ? incidents 
     : incidents.filter(i => !i.moderationStatus || i.moderationStatus === 'clean');
+
+  const responderSummary = getResponderSummary(incidents);
+
+  const handleResponderTemplate = (template: { note: string; status: IncidentStatus; severity: SeverityLevel }) => {
+    if (!checkResponderAuth()) return;
+    if (!selectedIncident) return;
+    setResponderStatus(template.status);
+    setSelectedSeverity(template.severity);
+    setResponderNotes(template.note);
+    setResponderReviewStatus(selectedIncident.reviewStatus || 'pending');
+    setResponderReviewReason(selectedIncident.reviewReason || '');
+    setResponderInternalNotes(selectedIncident.internalNotes || '');
+    setResponderAssignedAgency(selectedIncident.assignedAgency || '');
+    setShowOfficialUpdateModal(true);
+    window.history.pushState({ type: 'officialUpdate' }, '');
+  };
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] dark:bg-zinc-950 text-slate-800 dark:text-zinc-200 font-sans selection:bg-emerald-500 selection:text-slate-900 transition-colors duration-300 relative overflow-x-hidden pb-24" id="alertgh-main-root">
@@ -1273,33 +1415,80 @@ export default function App() {
           </div>
 
           {/* Navigation links & Mode selection */}
-          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
             
             {/* Quick Navigation Tabs */}
-            <nav className="hidden md:flex items-center gap-1.5 bg-[#eef0f3] dark:bg-zinc-850 p-1 rounded-full border border-slate-200/60 dark:border-zinc-700/60 relative transition-colors duration-300" id="main-navigation-navbar">
-              {[
-                { id: 'map', label: 'Map', icon: Map, color: 'text-blue-600 dark:text-blue-400' },
-                { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-indigo-600 dark:text-indigo-400' },
-                { id: 'hotlines', label: 'Directory', icon: Phone, color: 'text-emerald-600 dark:text-emerald-400' }
-              ].map((tab) => {
-                const isActive = activeTab === tab.id;
-                const IconComponent = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as 'map' | 'analytics' | 'hotlines')}
-                    className={`relative px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-300 flex items-center gap-1.5 cursor-pointer select-none active:scale-95 ${
-                      isActive
-                        ? 'bg-white dark:bg-zinc-700 text-slate-900 dark:text-zinc-50 shadow-[0_2px_8px_rgba(0,0,0,0.06)] border border-slate-200/30 dark:border-zinc-600/30 font-bold'
-                        : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-white/40 dark:hover:bg-zinc-700/40'
-                    }`}
-                  >
-                    <IconComponent className={`w-3.5 h-3.5 transition-transform duration-300 ${isActive ? `${tab.color} scale-110` : 'text-slate-400 dark:text-zinc-500'}`} />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setShowMobileNav((value) => !value)}
+                className="sm:hidden inline-flex items-center justify-center rounded-full border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-2 text-slate-600 dark:text-zinc-300 shadow-sm"
+                aria-label="Toggle navigation"
+              >
+                {showMobileNav ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              </button>
+
+              <div className={`w-full sm:hidden ${showMobileNav ? 'block' : 'hidden'}`}>
+                <nav className="mt-2 flex flex-col gap-1.5 bg-white/95 dark:bg-zinc-900/95 p-2 rounded-2xl border border-slate-200/70 dark:border-zinc-800 shadow-lg backdrop-blur-sm" id="main-navigation-navbar-mobile">
+                  {[
+                    { id: 'map', label: 'Map', icon: Map, color: 'text-blue-600 dark:text-blue-400' },
+                    { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-indigo-600 dark:text-indigo-400' },
+                    { id: 'hotlines', label: 'Directory', icon: Phone, color: 'text-emerald-600 dark:text-emerald-400' }
+                  ].map((tab) => {
+                    const isActive = activeTab === tab.id;
+                    const IconComponent = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          setActiveTab(tab.id as 'map' | 'analytics' | 'hotlines');
+                          setShowMobileNav(false);
+                        }}
+                        className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-300 ${
+                          isActive
+                            ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400'
+                            : 'text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <IconComponent className={`w-4 h-4 ${isActive ? tab.color : 'text-slate-400 dark:text-zinc-500'}`} />
+                          {tab.label}
+                        </span>
+                        {isActive && <span className="text-[10px] uppercase tracking-wide">Open</span>}
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              <nav className="hidden sm:flex flex-wrap items-center gap-1.5 bg-[#eef0f3] dark:bg-zinc-850 p-1 rounded-full border border-slate-200/60 dark:border-zinc-700/60 relative transition-colors duration-300 w-full sm:w-auto max-w-full overflow-x-auto" id="main-navigation-navbar">
+                {[
+                  { id: 'map', label: 'Map', icon: Map, color: 'text-blue-600 dark:text-blue-400' },
+                  { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-indigo-600 dark:text-indigo-400' },
+                  { id: 'hotlines', label: 'Directory', icon: Phone, color: 'text-emerald-600 dark:text-emerald-400' }
+                ].map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  const IconComponent = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => {
+                        setActiveTab(tab.id as 'map' | 'analytics' | 'hotlines');
+                        setShowMobileNav(false);
+                      }}
+                      className={`relative px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-300 flex items-center gap-1.5 cursor-pointer select-none active:scale-95 ${
+                        isActive
+                          ? 'bg-white dark:bg-zinc-700 text-slate-900 dark:text-zinc-50 shadow-[0_2px_8px_rgba(0,0,0,0.06)] border border-slate-200/30 dark:border-zinc-600/30 font-bold'
+                          : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-white/40 dark:hover:bg-zinc-700/40'
+                      }`}
+                    >
+                      <IconComponent className={`w-3.5 h-3.5 transition-transform duration-300 ${isActive ? `${tab.color} scale-110` : 'text-slate-400 dark:text-zinc-500'}`} />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
 
             <div className="h-6 w-px bg-slate-200 dark:bg-zinc-800 hidden md:block transition-colors duration-300" />
 
@@ -1608,9 +1797,14 @@ export default function App() {
 
                     {/* Meta Indicators */}
                     <div className="flex flex-wrap gap-2 mb-4">
-                      <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${getSeverityStyle(selectedIncident.severity)}`}>
-                        {selectedIncident.severity}
+                      <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${getSeverityStyle(getOfficialSeverity({ severity: selectedIncident.severity, officialSeverity: selectedIncident.officialSeverity }))}`}>
+                        {getOfficialSeverity({ severity: selectedIncident.severity, officialSeverity: selectedIncident.officialSeverity })}
                       </span>
+                      {selectedIncident.officialSeverity && selectedIncident.officialSeverity !== selectedIncident.severity && (
+                        <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200/60 shadow-sm">
+                          Base {selectedIncident.severity}
+                        </span>
+                      )}
                       <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${getStatusStyle(selectedIncident.status)}`}>
                         {selectedIncident.status}
                       </span>
@@ -1753,14 +1947,91 @@ export default function App() {
                             🛡️ RESPONDER ACTION CENTER
                           </span>
 
+                          <div className="rounded-2xl border border-blue-200/70 bg-blue-50/70 dark:border-blue-900/40 dark:bg-blue-950/20 p-3 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Dispatch snapshot</p>
+                                <p className="text-[11px] text-blue-800/80 dark:text-blue-200/80">Fast triage for the current incident stream</p>
+                              </div>
+                              <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                                {responderSummary.active} active
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-[10px] font-semibold">
+                              <div className="rounded-xl bg-white/80 px-2.5 py-2 text-slate-700 dark:bg-zinc-900/70 dark:text-zinc-200">
+                                <div className="text-slate-400">Active</div>
+                                <div className="text-sm font-bold text-slate-900 dark:text-zinc-50">{responderSummary.active}</div>
+                              </div>
+                              <div className="rounded-xl bg-white/80 px-2.5 py-2 text-slate-700 dark:bg-zinc-900/70 dark:text-zinc-200">
+                                <div className="text-slate-400">Investigating</div>
+                                <div className="text-sm font-bold text-slate-900 dark:text-zinc-50">{responderSummary.investigating}</div>
+                              </div>
+                              <div className="rounded-xl bg-white/80 px-2.5 py-2 text-slate-700 dark:bg-zinc-900/70 dark:text-zinc-200">
+                                <div className="text-slate-400">Resolved</div>
+                                <div className="text-sm font-bold text-slate-900 dark:text-zinc-50">{responderSummary.resolved}</div>
+                              </div>
+                              <div className="rounded-xl bg-white/80 px-2.5 py-2 text-slate-700 dark:bg-zinc-900/70 dark:text-zinc-200">
+                                <div className="text-slate-400">Flagged</div>
+                                <div className="text-sm font-bold text-slate-900 dark:text-zinc-50">{responderSummary.flagged}</div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleResponderTemplate({
+                                  note: 'Units are en route. Maintain safe distance and follow official guidance until the area is cleared.',
+                                  status: 'investigating',
+                                  severity: 'high'
+                                })}
+                                className="rounded-xl border border-blue-200 bg-white/90 px-2.5 py-2 text-[10px] font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-900/40 dark:bg-zinc-900/70 dark:text-blue-300"
+                              >
+                                Dispatch update
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResponderTemplate({
+                                  note: 'Traffic diversion is advised to keep routes clear for emergency services and reduce further risk.',
+                                  status: 'active',
+                                  severity: 'high'
+                                })}
+                                className="rounded-xl border border-amber-200 bg-white/90 px-2.5 py-2 text-[10px] font-semibold text-amber-700 transition hover:bg-amber-100 dark:border-amber-900/40 dark:bg-zinc-900/70 dark:text-amber-300"
+                              >
+                                Route diversion
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResponderTemplate({
+                                  note: 'The situation is now contained and safe. Continue monitoring for secondary risk while sharing updates with the public.',
+                                  status: 'resolved',
+                                  severity: 'low'
+                                })}
+                                className="rounded-xl border border-emerald-200 bg-white/90 px-2.5 py-2 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-900/40 dark:bg-zinc-900/70 dark:text-emerald-300"
+                              >
+                                Safe / contained
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!checkResponderAuth()) return;
+                                  populateResponderForm(selectedIncident);
+                                  setShowOfficialUpdateModal(true);
+                                  window.history.pushState({ type: 'officialUpdate' }, '');
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white/90 px-2.5 py-2 text-[10px] font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-200"
+                              >
+                                Custom update
+                              </button>
+                            </div>
+                          </div>
+
                           <div className="grid grid-cols-2 gap-2">
                             {/* Add Official Update Button */}
                             <button
                               onClick={() => {
                                 if (!checkResponderAuth()) return;
-                                setResponderStatus(selectedIncident.status);
-                                setResponderNotes(selectedIncident.officialNotes || '');
-                                setSelectedSeverity(selectedIncident.severity);
+                                populateResponderForm(selectedIncident);
                                 setShowOfficialUpdateModal(true);
                                 window.history.pushState({ type: 'officialUpdate' }, '');
                               }}
@@ -1781,6 +2052,30 @@ export default function App() {
                             >
                               <CheckCircle className="w-4 h-4" />
                               {selectedIncident.status === 'resolved' ? 'Mark Active' : 'Mark Resolved'}
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleResponderReviewAction(selectedIncident.id, 'verified', 'Verified by official responder.')}
+                              className="rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300"
+                            >
+                              ✅ Verify report
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResponderReviewAction(selectedIncident.id, 'dismissed', 'Dismissed after responder review.')}
+                              className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-2 text-[10px] font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300"
+                            >
+                              🗑️ Dismiss review
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleBulkResolveVisible()}
+                              className="col-span-2 rounded-xl border border-blue-200 bg-white/90 px-2.5 py-2 text-[10px] font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-900/40 dark:bg-zinc-900/70 dark:text-blue-300"
+                            >
+                              🔄 Bulk resolve visible
                             </button>
                           </div>
 
@@ -2075,9 +2370,14 @@ export default function App() {
 
                 {/* Meta Indicators */}
                 <div className="flex flex-wrap gap-2">
-                  <span className={`text-[10px] font-semibold uppercase px-2.5 py-1 rounded-full ${getSeverityStyle(selectedIncident.severity)}`}>
-                    {selectedIncident.severity}
+                  <span className={`text-[10px] font-semibold uppercase px-2.5 py-1 rounded-full ${getSeverityStyle(getOfficialSeverity({ severity: selectedIncident.severity, officialSeverity: selectedIncident.officialSeverity }))}`}>
+                    {getOfficialSeverity({ severity: selectedIncident.severity, officialSeverity: selectedIncident.officialSeverity })}
                   </span>
+                  {selectedIncident.officialSeverity && selectedIncident.officialSeverity !== selectedIncident.severity && (
+                    <span className="text-[10px] font-semibold uppercase px-2.5 py-1 rounded-full bg-slate-100 dark:bg-zinc-800/40 border border-slate-200/80 dark:border-zinc-850 text-slate-500 dark:text-zinc-400">
+                      Base {selectedIncident.severity}
+                    </span>
+                  )}
                   <span className={`text-[10px] font-semibold uppercase px-2.5 py-1 rounded-full ${getStatusStyle(selectedIncident.status)}`}>
                     {selectedIncident.status}
                   </span>
@@ -2417,23 +2717,28 @@ export default function App() {
 
               <form onSubmit={(e) => handleResponderUpdateSubmit(e, selectedIncident.id)} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Status update */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Advisory Status</label>
-                    <select
-                      value={responderStatus}
-                      onChange={(e) => setResponderStatus(e.target.value as IncidentStatus)}
-                      className="w-full bg-slate-50 dark:bg-zinc-950 text-xs text-slate-700 dark:text-zinc-300 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 cursor-pointer shadow-sm transition-all"
-                    >
-                      <option value="active">🔴 Active Outbreak</option>
-                      <option value="investigating">🟡 Investigating</option>
-                      <option value="resolved">🟢 Resolved / Safe</option>
-                    </select>
+                    <div className="flex flex-wrap gap-2">
+                      {(['active','investigating','resolved'] as IncidentStatus[]).map((status) => (
+                        <button
+                          key={status}
+                          type="button"
+                          onClick={() => setResponderStatus(status)}
+                          className={`rounded-full px-2.5 py-1.5 text-[10px] font-semibold border transition ${
+                            responderStatus === status
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-slate-600 border-slate-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
+                          }`}
+                        >
+                          {status === 'active' ? 'Active' : status === 'investigating' ? 'Investigating' : 'Resolved'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  {/* Severity level */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Adjust Threat Level</label>
+                    <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Official Threat Level</label>
                     <select
                       value={selectedSeverity}
                       onChange={(e) => setSelectedSeverity(e.target.value as SeverityLevel)}
@@ -2447,7 +2752,60 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Dispatch Notes */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Review Status</label>
+                    <select
+                      value={responderReviewStatus}
+                      onChange={(e) => setResponderReviewStatus(e.target.value as 'pending' | 'verified' | 'dismissed')}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 text-xs text-slate-700 dark:text-zinc-300 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 cursor-pointer shadow-sm transition-all"
+                    >
+                      <option value="pending">⏳ Pending review</option>
+                      <option value="verified">✅ Verified</option>
+                      <option value="dismissed">🗑️ Dismissed</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Agency Assignment</label>
+                    <select
+                      value={responderAssignedAgency}
+                      onChange={(e) => setResponderAssignedAgency(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 text-xs text-slate-700 dark:text-zinc-300 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 cursor-pointer shadow-sm transition-all"
+                    >
+                      <option value="">Unassigned</option>
+                      <option value="NADMO">NADMO</option>
+                      <option value="GNFS">GNFS</option>
+                      <option value="NAS">NAS</option>
+                      <option value="Ghana Police">Ghana Police</option>
+                      <option value="ECG">ECG</option>
+                      <option value="GHS">GHS</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Review Reason</label>
+                  <textarea
+                    value={responderReviewReason}
+                    onChange={(e) => setResponderReviewReason(e.target.value)}
+                    placeholder="Explain the decision for this report review."
+                    rows={2}
+                    className="w-full bg-slate-50 dark:bg-zinc-950 text-xs text-slate-700 dark:text-zinc-300 p-3.5 rounded-2xl border border-slate-200 dark:border-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 resize-none shadow-sm transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Internal Responder Notes</label>
+                  <textarea
+                    value={responderInternalNotes}
+                    onChange={(e) => setResponderInternalNotes(e.target.value)}
+                    placeholder="Add internal dispatch notes, resource status, or field observations."
+                    rows={3}
+                    className="w-full bg-slate-50 dark:bg-zinc-950 text-xs text-slate-700 dark:text-zinc-300 p-3.5 rounded-2xl border border-slate-200 dark:border-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 resize-none shadow-sm transition-all"
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <label className="text-xs font-bold text-slate-600 dark:text-zinc-350">Official Survival Advisory</label>
@@ -2719,35 +3077,55 @@ export default function App() {
               {/* Scrollable Content */}
               <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
                 
-                {/* 1. Subscription Preference Switch */}
+                {/* 1. Push Notifications Toggle */}
                 <div className="bg-[#f5f5f7] p-4 rounded-2xl border border-slate-200/60 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-[10.5px] font-semibold text-slate-800 uppercase block">Push Alerts Engine</span>
-                      <p className="text-[10px] text-slate-500 mt-0.5">Toggle push notifications subscription</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {fcm.permission === 'unsupported'
+                          ? 'Push notifications are not supported in this browser.'
+                          : fcm.permission === 'denied'
+                          ? 'Notifications blocked — enable them in browser settings.'
+                          : 'Receive real-time alerts even when the app is closed.'}
+                      </p>
                     </div>
-                    <button
-                      onClick={() => {
-                        const nextVal = !notifPref.isSubscribed;
-                        setNotifPref(prev => ({ ...prev, isSubscribed: nextVal }));
-                      }}
-                      className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none flex cursor-pointer ${
-                        notifPref.isSubscribed ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'
-                      }`}
-                    >
-                      <span className="w-4 h-4 rounded-full bg-white shadow-md" />
-                    </button>
+                    {fcm.permission === 'unsupported' || fcm.permission === 'denied' ? (
+                      <span className={`text-[9px] font-bold uppercase px-2 py-1 rounded-lg border ${
+                        fcm.permission === 'denied'
+                          ? 'bg-red-50 border-red-200 text-red-600'
+                          : 'bg-slate-100 border-slate-200 text-slate-400'
+                      }`}>
+                        {fcm.permission === 'denied' ? 'Blocked' : 'N/A'}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => fcm.isRegistered ? fcm.disablePush() : fcm.enablePush()}
+                        disabled={fcm.isLoading}
+                        className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none flex cursor-pointer disabled:opacity-50 ${
+                          fcm.isRegistered ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'
+                        }`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-white shadow-md" />
+                      </button>
+                    )}
                   </div>
 
-                  {notifPref.isSubscribed ? (
+                  {fcm.isRegistered && fcm.permission === 'granted' && (
                     <div className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                      Opt-In Active. Ready to receive push alerts.
+                      Device registered. Push alerts active.
                     </div>
-                  ) : (
+                  )}
+                  {!fcm.isRegistered && fcm.permission === 'granted' && (
                     <div className="text-[10px] text-slate-500 font-semibold flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200">
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                      Opt-Out Active. Silent mode.
+                      Toggle on to register this device.
+                    </div>
+                  )}
+                  {fcm.permission === 'denied' && (
+                    <div className="text-[10px] text-red-600 font-semibold flex items-center gap-1.5 bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-100">
+                      ⚠️ Open browser settings → Site permissions → Allow notifications for this site.
                     </div>
                   )}
                 </div>

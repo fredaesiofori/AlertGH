@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 import { PushNotification, NotificationPreference, Incident, SeverityLevel, IncidentCategory } from '../types';
+export { useFCM } from './useFCM';
+export type { FCMState } from './useFCM';
 
 const DEFAULT_PREF: NotificationPreference = {
   isSubscribed: true,
