@@ -19,6 +19,11 @@ export interface Incident {
   downvotes: number;
   status: IncidentStatus;
   officialNotes?: string;
+  officialSeverity?: SeverityLevel;
+  reviewStatus?: 'pending' | 'verified' | 'dismissed';
+  reviewReason?: string;
+  internalNotes?: string;
+  assignedAgency?: string;
   imagePreset?: string;
   customImage?: string;
   coordinates: { x: number; y: number }; // Percentage position on the custom SVG map (0-100)
