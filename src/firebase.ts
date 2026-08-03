@@ -21,8 +21,10 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { Incident, EmergencyContact } from './types';
 import { INITIAL_INCIDENTS, EMERGENCY_CONTACTS } from './data/ghanaData';
+import { readStorage, writeStorage } from './utils';
 
 const isFirebaseConfigured = !!(
   import.meta.env.VITE_FIREBASE_API_KEY &&
@@ -42,6 +44,7 @@ let app: any;
 let db: any = null;
 let auth: any = null;
 let storage: any = null;
+let messagingInstance: any = null;
 
 if (isFirebaseConfigured) {
   try {
@@ -82,33 +85,25 @@ const sanitizeLog = (val: unknown): string =>
 
 // Memory & LocalStorage Fallback State
 const getLocalIncidents = (): Incident[] => {
-  try {
-    const saved = localStorage.getItem('alertgh_incidents');
-    if (saved) return JSON.parse(saved);
-  } catch (e) {
-    console.error('Error parsing local incidents:', sanitizeLog(e));
-  }
-  localStorage.setItem('alertgh_incidents', JSON.stringify(INITIAL_INCIDENTS));
+  const saved = readStorage<Incident[] | null>('alertgh_incidents', null);
+  if (saved) return saved;
+  writeStorage('alertgh_incidents', INITIAL_INCIDENTS);
   return INITIAL_INCIDENTS;
 };
 
 const saveLocalIncidents = (incidents: Incident[]) => {
-  localStorage.setItem('alertgh_incidents', JSON.stringify(incidents));
+  writeStorage('alertgh_incidents', incidents);
 };
 
 const getLocalContacts = (): EmergencyContact[] => {
-  try {
-    const saved = localStorage.getItem('alertgh_emergency_contacts');
-    if (saved) return JSON.parse(saved);
-  } catch (e) {
-    console.error('Error parsing local emergency contacts:', sanitizeLog(e));
-  }
-  localStorage.setItem('alertgh_emergency_contacts', JSON.stringify(EMERGENCY_CONTACTS));
+  const saved = readStorage<EmergencyContact[] | null>('alertgh_emergency_contacts', null);
+  if (saved) return saved;
+  writeStorage('alertgh_emergency_contacts', EMERGENCY_CONTACTS);
   return EMERGENCY_CONTACTS;
 };
 
 const saveLocalContacts = (contacts: EmergencyContact[]) => {
-  localStorage.setItem('alertgh_emergency_contacts', JSON.stringify(contacts));
+  writeStorage('alertgh_emergency_contacts', contacts);
 };
 
 // Seeding Firestore Helper
@@ -324,7 +319,92 @@ export const deleteIncidentFromFirestore = async (id: string): Promise<void> => 
   }
 };
 
-export { auth, isFirebaseConfigured };
+export { auth, db, isFirebaseConfigured };
+
+// ─── FCM Push Notification Token Management ───────────────────────────────────
+
+// Lazily get (or reuse) the Firebase Messaging instance
+async function getMessagingInstance(): Promise<any> {
+  if (messagingInstance) return messagingInstance;
+  if (!isFirebaseConfigured || !app) return null;
+  try {
+    const supported = await isSupported();
+    if (!supported) return null;
+    messagingInstance = getMessaging(app);
+    // Send config to the FCM service worker so it can init Firebase there too
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+      reg?.active?.postMessage({ type: 'FIREBASE_CONFIG', config: firebaseConfig });
+    }
+    return messagingInstance;
+  } catch {
+    return null;
+  }
+}
+
+export type FCMPermissionState = 'default' | 'granted' | 'denied' | 'unsupported';
+
+/** Request notification permission and register the FCM token in Firestore */
+export async function registerFCMToken(
+  sessionId: string,
+  prefs: { geofence: string; severities: string[]; categories: string[] }
+): Promise<{ token: string | null; permission: FCMPermissionState }> {
+  if (!('Notification' in window)) return { token: null, permission: 'unsupported' };
+
+  const messaging = await getMessagingInstance();
+  if (!messaging) return { token: null, permission: 'unsupported' };
+
+  const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
+  if (!vapidKey) return { token: null, permission: 'unsupported' };
+
+  // Register the FCM service worker explicitly
+  let swReg: ServiceWorkerRegistration | undefined;
+  try {
+    swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+    swReg.active?.postMessage({ type: 'FIREBASE_CONFIG', config: firebaseConfig });
+  } catch {
+    return { token: null, permission: 'unsupported' };
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    return { token: null, permission: permission as FCMPermissionState };
+  }
+
+  try {
+    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg });
+    if (token && db) {
+      await setDoc(
+        doc(db, 'fcm_tokens', sessionId),
+        { token, sessionId, geofence: prefs.geofence, severities: prefs.severities, categories: prefs.categories, updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
+    }
+    return { token, permission: 'granted' };
+  } catch {
+    return { token: null, permission: 'granted' }; // granted but token fetch failed
+  }
+}
+
+/** Remove the FCM token from Firestore and unsubscribe the device */
+export async function unregisterFCMToken(sessionId: string): Promise<void> {
+  try {
+    const messaging = await getMessagingInstance();
+    if (messaging) await deleteToken(messaging);
+    if (db) await deleteDoc(doc(db, 'fcm_tokens', sessionId));
+  } catch { /* silent — best effort */ }
+}
+
+/** Update stored preferences for an existing FCM token subscription */
+export async function updateFCMTokenPrefs(
+  sessionId: string,
+  prefs: { geofence: string; severities: string[]; categories: string[] }
+): Promise<void> {
+  if (!db) return;
+  try {
+    await updateDoc(doc(db, 'fcm_tokens', sessionId), { ...prefs, updatedAt: new Date().toISOString() });
+  } catch { /* silent */ }
+}
 
 // Abstracted Auth APIs supporting both Real Firebase & Offline Mock Fallback
 let mockAuthUser: any = null;
@@ -336,9 +416,9 @@ export const onAuthChanged = (callback: (user: any) => void) => {
   } else {
     // Initialize mock user from localStorage
     try {
-      const saved = localStorage.getItem('alertgh_mock_user');
+      const saved = readStorage<any>('alertgh_mock_user', null);
       if (saved) {
-        mockAuthUser = JSON.parse(saved);
+        mockAuthUser = saved;
       }
     } catch (e) {
       console.error('Error loading mock user:', sanitizeLog(e));
@@ -375,7 +455,7 @@ export const loginWithEmail = async (email: string, password: string): Promise<a
       displayName: email.split('@')[0]
     };
     mockAuthUser = user;
-    localStorage.setItem('alertgh_mock_user', JSON.stringify(user));
+    writeStorage('alertgh_mock_user', user);
     authCallbacks.forEach(cb => cb(user));
     return user;
   }
@@ -399,7 +479,7 @@ export const registerWithEmail = async (email: string, password: string): Promis
       displayName: email.split('@')[0]
     };
     mockAuthUser = user;
-    localStorage.setItem('alertgh_mock_user', JSON.stringify(user));
+    writeStorage('alertgh_mock_user', user);
     authCallbacks.forEach(cb => cb(user));
     return user;
   }
@@ -410,7 +490,7 @@ export const logoutUser = async (): Promise<void> => {
     await signOut(auth);
   } else {
     mockAuthUser = null;
-    localStorage.removeItem('alertgh_mock_user');
+    writeStorage('alertgh_mock_user', null);
     authCallbacks.forEach(cb => cb(null));
   }
 };
