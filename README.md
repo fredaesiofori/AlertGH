@@ -25,6 +25,8 @@ Report hazards anonymously, track live incidents on an interactive map, and coor
 
 Deployed on Firebase Hosting — updates automatically on every merge to `main`.
 
+[![DeepScan grade](https://deepscan.io/api/teams/30270/projects/32130/branches/1046147/badge/grade.svg)](https://deepscan.io/dashboard#view=project&tid=30270&pid=32130&bid=1046147)
+
 ---
 
 ## Overview

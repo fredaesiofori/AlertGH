@@ -11,8 +11,6 @@ updates:
       # Ignore noisy patch bumps — only care about minor and major
       - dependency-name: "*"
         update-types: ["version-update:semver-patch"]
-    labels:
-      - "dependencies"
     commit-message:
       prefix: "chore"
       include: "scope"
